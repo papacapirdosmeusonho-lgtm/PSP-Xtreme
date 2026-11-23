@@ -1,50 +1,74 @@
 
-name: Build PSP-Xtreme Android APK
+name: PSP-Xtreme Android APK
 
 on:
   workflow_dispatch:
+    inputs:
+      buildVariant:
+        type: choice
+        description: Build Variant
+        required: true
+        default: NormalOptimized
+        options:
+          - NormalOptimized
+          - NormalDebug
+          - VROptimized
+          - VRDebug
+          - LegacyOptimized
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Compile Android APK
+  apk:
+    name: Generate Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
     steps:
-      - name: Download source code
-        uses: actions/checkout@v4
+      - name: Download source
+        uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           submodules: recursive
 
-      - name: Install Java
-        uses: actions/setup-java@v4
+      - name: Check version tags
+        id: valid-tags
+        shell: bash
+        run: |
+          echo "count=$(git tag -l 'v[0-9]*' | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch official version tags
+        if: steps.valid-tags.outputs.count == '0'
+        run: |
+          git remote add upstream https://github.com/hrydgard/ppsspp.git
+          git fetch --deepen=15000 --no-recurse-submodules --tags --force upstream || exit 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Configure Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Check Android version
+        run: gradle --quiet androidGitVersion
 
-      - name: Install Android dependencies
-        run: |
-          yes | sdkmanager --licenses
-          sdkmanager --install \
-            "platforms;android-37" \
-            "ndk;29.0.14206865" \
-            "cmake;3.22.1"
-
-      - name: Build APK
+      - name: Compile APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleNormalRelease
+          ./gradlew assemble${{ inputs.buildVariant }} --stacktrace
+
+      - name: Prepare APK
+        run: |
+          mkdir -p ppsspp
+          find android/build -type f -name "*.apk" -exec cp {} ppsspp/ \;
+          test -n "$(find ppsspp -name '*.apk' -print -quit)"
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PSP-Xtreme-Android-APK
-          path: android/build/outputs/apk/normal/release/*.apk
+          path: ppsspp/*.apk
           if-no-files-found: error
           retention-days: 7
